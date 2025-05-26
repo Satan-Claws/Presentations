@@ -294,34 +294,38 @@ There's no explicit queueing or delivery delays - messages exist virtually and m
 This shows a simplified view of our network model with nodes and inboxes, removing the central network component and focusing on the inbox processing.
 
 ## 5.18 Inbox Constraint Refinement Process
-We refined inbox constraints through an iterative process:
-1. Run the model
-2. When a property fails, analyze the trace
-3. Add constraints to rule out unrealistic behaviors
-4. Repeat until the non-buggy model passes via K-Induction and the buggy model fails
+The most important thing that is required to get this model to work is finding a correct Constraint on the Inbox.
+To do this, we've described the method in the flow chart
+So, we refined the constraints on the inbox through an iterative process:
+1. We run the model
+2. When a property fails, analyze the trace, this part got easier once we removed all the avoidable loops in our code implementation.
+3. Read the trace and understand why its spurious, add constraints to rule out these unrealistic behaviors
+4. Repeat this until the bug free model passes the safety check via K-Induction and let the buggy model fail.
 
 ## 5.19 Follower: State Transitions
+Apart from the constraints on the inbox, we have further rules on the transitions for each role.
 Followers have these state transitions:
 - On timeout with no message: Become a candidate, increment term, vote for self, and reset votes
 - On vote request: Reset timeout, update votedFor if valid.
 - On heartbeat with valid term: Reset timeout, update term if higher, reset vote
 
 ## 5.20 Candidate: State Transitions
-Candidates have these transitions:
+The transitions for candidates are:
 - On vote grant: Update vote counters, become leader if majority reached
 - On heartbeat with higher term: Become follower, update term
 - On vote request with higher term: Become follower, update term, change votedFor to sender.
 
 ## 5.21 Leader: State Transitions
-Leaders transition on:
+And similarly, the leaders transition on:
 - Heartbeat with higher term: Become follower, update term
 - Vote request with higher term: Become follower, update term, change votedFor to sender
 - Vote grant: Update vote counters
 
-## Now we move on to Targeted Bugs
+## Now we can move on to Targeted Bugs
 
 ## 6.1 Common Bugs in Raft Implementations
-Despite Raft's design for simplicity and understandability; implementations still have subtle bugs in areas like vote counting, term handling, log indexing, and recovery management. 
+Despite Raft's design for simplicity and understandability; implementations still have subtle bugs in areas like vote counting, term handling, log indexing, and recovery management.
+This can arise due to the gap between Raft's conceptual simplicity and the complexity of implementing it in real distributed systems with asynchronous networks, concurrent operations, and partial failures.
 We focused on the duplicate vote bug commonly known as raft-45.
 
 ## 6.2 Duplicate Vote Bug (raft-45)
@@ -367,11 +371,35 @@ Here our concerned A is just a simple projection function.
 
 ## 7.4 Checking Model with CBMC
 We used CBMC (C Bounded Model Checker) with various flags to check our model, including specifying properties, enabling traces, injecting bugs, and using fixed initialization.
+The key flags we used include:
+- --property main.assertion.X: This allows us to target specific assertions in the code
+- --trace-hex: Produces a detailed trace output when violations are found
+- -DINJECT_DUPLICATE_VOTE_BUG: Enables our duplicate vote bug implementation
+- -DUSE_FIXED_INIT: Forces a specific initial state to focus the verification
 
 ## 7.5 CBMC-style Pseudocode
-Our verification approach initializes states, assumes properties hold, applies transitions while assuming properties, and then checks if the safety property holds after the final transition.
+This part of the code is just to visualize the main loop of the CBMC code.
+The pseudocode looks like this:
 
-## Now, we can move on to the Experimentation and the Results
+init_states();
+__CPROVER_assume(check_property());
+where we intialize the states
+
+for (int k = 0; k < varK; k++) {
+    apply_transition();
+    __CPROVER_assume(check_property());
+}
+which means we enter the loop and assume the property we are concerned holds good with after each transition
+
+apply_transition();
+
+here we take a final transition before asserting our safety property
+
+assert(check_safety_property());
+
+In summary or verification approach initializes states, assumes properties hold, applies transitions while assuming properties, and then checks if the safety property holds after the final transition.
+
+## Now, we can finally move on to the Experimentation and the Results
 
 ## 8.1 Goals
 Our experimental goals were:
@@ -386,41 +414,76 @@ Even with a duplicate vote, the candidate would have legitimate votes from itsel
 We need at least 4 nodes to demonstrate the bug.
 
 ## 8.3 Minimum Steps to Failure Analysis
-For N=2x or N=2x+1, we need at least 2x+4 steps to find a safety violation. 
-This includes steps for Node A to become a leader with duplicate votes and Node C to similarly become a leader, with each requiring x+2 steps. 
-This makes it easier to conduct experiments.
+For N=2x or N=2x+1, we need at least 2x+4 steps to find a safety violation.
+For x greater or equal to 2 obviously as described before.
+So this violation happens when,
+a Node A times out and becomes a candidate and votes for itself
+another Node B, recieves a vote request from Node A generated into its inbox, and chooses to processes it via changing its votedFor
+then Node A can have Node B's voteGrant generated into its inbox, and this can happen a total of x times.
+After which Node A has recieved a total of x+1 votes, and becomes the leader.
+Now a similar thing can happen with Nodes C and Node D, and in totality this will require 2x+4 steps to get to the violation of our safety property
+This makes it easier to conduct experiments, as we do not have to go one by one checking each value of K where BMC fails for the first time
+but instead we can target 2x+3 and 2x+4 and conclude the smallest value of K on the basis of when it passed and when it failed
 
 ## 8.4 Goal 1: BMC for Safety Property vs BMC for Invariants
 Our first experiment compared the performance of checking different invariants. 
 We found that violations of the unique vote (UV) and leader uniqueness (L) invariants were detected earlier (at K=4 and K=5) than violations of the safety property (P) or unique quorum (UQ), which required K=8.
+We can also see that the violation of Unique Vote and Leader Uniqueness is multiple folds faster than that of our safety property.
 
 ## 8.5 Goal 2: Vanilla BMC vs Invariant Aided BMC
 Our second experiment evaluated whether assuming invariants at each step improved BMC performance. 
 We found that assuming certain invariants, especially unique vote (UV), improved verification time from 210.75 seconds to 162.49 seconds.
+Now this is a 23% improvement already, but we can do better.
 
 ## 8.6 Goal 3: Vanilla BMC vs Constrained Search Space
 Our third experiment tested if injecting expected violations at specific steps improved performance. 
 Injecting a unique vote violation at step 4 reduced verification time to 139.08 seconds, a significant improvement over both vanilla BMC and invariant-aided BMC.
+Compared with our original 210 seconds, this is a 34% improvement in runtime.
 
 ## 8.7 Performance Comparison
-This chart visually compares the performance improvements from our different approaches for N=4 nodes. 
+Now, this chart visually compares the performance improvements from our different approaches for N=4 nodes. 
 As you can see, injecting violations at specific points led to the best performance.
 
 ## 8.8 Modifications in the code
 We also experimented with an optimization where, knowing that the Safety Property doesn't get violated until varK steps, we assume the property at the varK-1 step instead of for the whole trace. 
 This makes the formula smaller while preserving the same trace.
+So the code was changed to:
+
+init_states();
+
+for (int k = 0; k < varK; k++) {
+    apply_transition();
+}
+
+here we dont have assumptions throughout the loop
+
+__CPROVER_assume(check_property());
+
+but we do have one assumption before the last transition
+since we know that our safety property cant fail up until this point, this is helpful to us
+
+apply_transition();
+
+then we apply the transition and then assert the safety property
+
+assert(check_safety_property());
+
 Using this the SAT solver can have an easier time looking for a solution.
 
 ## 8.9 Experiments with N = 6 Nodes
 With larger cluster sizes, the performance differences became more pronounced. 
-For N=6, vanilla BMC took 1333.11 seconds, while our best approach reduced this to 730.69 seconds.
+Firstly all of the results take a much longer time to complete when compared to N=4, but thats because not only did the cluster size change,
+but the first time we see a violation, that is, the number of steps till violation also increased
+And since each transition is non-deterministic, even 2 more steps can change the number of traces to look for dramatically.
+Ok so now, for N=6, vanilla BMC took 1333.11 seconds, while our best approach reduced this to 730.69 seconds.
+This is a speed up of 46% in finding the violation of the bug, a huge improvement to spending more than 20 minutes on this.
 
 ## 8.10 Performance Comparison: All Assumptions
 This chart shows the performance improvements for N=6 across our different approaches. 
-The best approach was using a combination of helper invariants, achieving a 45% reduction in verification time.
+The best approach was using a combination of helper invariants with a speed up saving around half the time.
 
 ## 8.11 Key Insights
-Our key insights were:
+Throughout this research, our key insights were:
 - Violations to the safety property are often preceded by violations to helper invariants
 - Selectively assuming helper properties can guide the model checker effectively
 - Injecting violations at specific points can accelerate counterexample discovery
