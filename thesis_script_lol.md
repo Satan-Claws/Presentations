@@ -218,7 +218,14 @@ And therefore this model is correct by construction.
 ## 5.5 Level 2: Less Abstract Model
 Our Level 2 model abstracts away network and messages but retains roles, terms, and votes to enable safety proofs. 
 It includes components like roles, process IDs, terms, quorum flags, and vote tracking.
-<talk about each model component>
+
+Let me detail each component of this model:
+- Role = {F, C, L}: The three possible states of a node - Follower, Candidate, or Leader
+- Procid = {0, 1, ..., Max}: Process identifiers for each node in the system
+- Term = PosInt: Terms are positive integers that monotonically increase
+- Quorum = bool: A boolean flag indicating whether a node has received a majority of votes
+- Votes: [Procid] → Nat: A mapping that tracks votes received from each node
+- State: Node = [Procid] → ⟨Role, Term, ms: Votes, q: Quorum⟩: The complete state mapping from process IDs to their associated role, term, vote counts, and quorum status
 
 
 ## 5.6 Defining LEP and Invariants
