@@ -163,7 +163,7 @@ An election can have three outcomes:
 - Lose: Candidate receives a message with equal or higher term
 - Split Vote: No majority due to simultaneous candidates
 
-Randomized election timeouts reduce split votes by having followers wait random times before becoming candidates.
+Here RAFT employs randomized heartbeat timeouts, where followers wait a randomly generated set amount of time before they become a candidate, this reduces split votes.
 
 ## 4.10 Election Safety Properties
 The Election Safety property ensures only one leader is elected per term. 
@@ -213,10 +213,13 @@ The Leader Election Property (LEP) states that if two nodes are leaders, they mu
 
 In our transition relation, we explicitly enforce LEP and ensure terms are non-decreasing. 
 Thus, every reachable state satisfies LEP by construction since the transition relation only allows valid states where the safety property holds.
+And therefore this model is correct by construction.
 
 ## 5.5 Level 2: Less Abstract Model
 Our Level 2 model abstracts away network and messages but retains roles, terms, and votes to enable safety proofs. 
 It includes components like roles, process IDs, terms, quorum flags, and vote tracking.
+<talk about each model component>
+
 
 ## 5.6 Defining LEP and Invariants
 We defined the Leader Election Property and supporting invariants:
@@ -312,17 +315,23 @@ Leaders transition on:
 
 ## 6.1 Common Bugs in Raft Implementations
 Despite Raft's design for simplicity and understandability; implementations still have subtle bugs in areas like vote counting, term handling, log indexing, and recovery management. 
-We focused on the duplicate vote bug (raft-45).
+We focused on the duplicate vote bug commonly known as raft-45.
 
 ## 6.2 Duplicate Vote Bug (raft-45)
-The duplicate vote bug occurs when candidates accept duplicate votes from the same follower in the same election term. 
-This violates leader safety, allowing two leaders to be elected in the same term, potentially leading to data inconsistency.
+The description of raft-45 is:
+"Candidates accept duplicate votes from the same follower in the same election term.
+(A follower might resend votes because it believed that an earlier vote was dropped
+by the network). Upon receiving the duplicate vote, the candidate counts it as a new
+vote and steps up to leader before it actually achieved a quorum of votes"
+
+And so, the duplicate vote bug occurs when candidates accept duplicate votes from the same follower in the same election term. 
+This violates leader safety, allowing two leaders to be elected in the same term, potentially leading to data inconsistency and other violations.
 
 ## 6.3 Modeling Duplicate Votes
 We implemented two vote counters:
-- true_votes: Counts unique voters (correct behavior)
+- true_votes: Counts the number of unique voters (correct behavior)
 - fake_votes: Counts total votes including duplicates (buggy behavior)
-We can toggle between them with a compilation flag -DINJECT_DUPLICATE_VOTE_BUG, allowing us to selectively enable the bug.
+We can toggle between them with a compilation flag -DINJECT_DUPLICATE_VOTE_BUG in our CBMC code, allowing us to selectively enable the bug.
 
 ## Moving on to Verification Properties
 
@@ -347,6 +356,7 @@ Specifically, we construct a formula of the form:
 T_cs(cs_0, cs_1) ∧ ... ∧ T_cs(cs_k, cs_k+1) ⇒ ¬[LEP(A(cs)) ∧ UniqueQ(A(cs)) ∧ MajQ(A(cs)) ∧ UniqueVote(A(cs))]
 Where T_cs represents the concrete transition relation, cs_i are concrete states, A is the abstraction function, and the right side contains our properties and invariants.
 This approach allows us to find violations in the concrete model that manifest as violations of our abstract invariants, often with fewer BMC steps than directly checking the concrete safety property.
+Here our concerned A is just a simple projection function.
 
 ## 7.4 Checking Model with CBMC
 We used CBMC (C Bounded Model Checker) with various flags to check our model, including specifying properties, enabling traces, injecting bugs, and using fixed initialization.
@@ -354,7 +364,7 @@ We used CBMC (C Bounded Model Checker) with various flags to check our model, in
 ## 7.5 CBMC-style Pseudocode
 Our verification approach initializes states, assumes properties hold, applies transitions while assuming properties, and then checks if the safety property holds after the final transition.
 
-## Moving on to Experimentation and Results
+## Now, we can move on to the Experimentation and the Results
 
 ## 8.1 Goals
 Our experimental goals were:
@@ -392,6 +402,7 @@ As you can see, injecting violations at specific points led to the best performa
 ## 8.8 Modifications in the code
 We also experimented with an optimization where, knowing that the Safety Property doesn't get violated until varK steps, we assume the property at the varK-1 step instead of for the whole trace. 
 This makes the formula smaller while preserving the same trace.
+Using this the SAT solver can have an easier time looking for a solution.
 
 ## 8.9 Experiments with N = 6 Nodes
 With larger cluster sizes, the performance differences became more pronounced. 
